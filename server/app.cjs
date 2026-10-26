@@ -3,6 +3,8 @@ const express = require("express");
 const mongoose = require("mongoose");
 const dotenv = require("dotenv");
 const { LocalStore } = require("./local-store.cjs");
+const { Employee, validateEmployee } = require("./employee.cjs");
+const { syncRemote } = require("./remote-sync.cjs");
 
 dotenv.config({ path: path.resolve(process.cwd(), ".env") });
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
@@ -10,18 +12,26 @@ dotenv.config({ path: path.resolve(__dirname, "../.env") });
 const app = express();
 const PORT = Number(process.env.PORT || 4000);
 const MONGO_URI = process.env.MONGO_URI;
+const REMOTE_API_URL = process.env.REMOTE_API_URL;
+let cloudConnected = false;
 const store = new LocalStore(process.env.EMPLOYEE_DATA_DIR || path.join(require("node:os").homedir(), ".employee-manager"));
 let syncError = "";
 let syncing = false;
 
 function storageStatus() {
-  return { mode: mongoose.connection.readyState === 1 && !syncError ? "online" : "offline", pending: store.pending().length, syncing, syncError };
+  return { mode: cloudConnected && !syncError ? "online" : "offline", pending: store.pending().length, syncing, syncError };
 }
 
 async function syncCloud() {
-  if (syncing || !MONGO_URI || MONGO_URI.includes("<db_username>")) return;
+  if (syncing || (!REMOTE_API_URL && (!MONGO_URI || MONGO_URI.includes("<db_username>")))) return;
   syncing = true;
   try {
+    if (REMOTE_API_URL) {
+      await syncRemote(store, REMOTE_API_URL, process.env.SYNC_TOKEN);
+      cloudConnected = true;
+      syncError = "";
+      return;
+    }
     if (mongoose.connection.readyState !== 1) {
       await mongoose.connect(MONGO_URI, { serverSelectionTimeoutMS: 3000, connectTimeoutMS: 3000, socketTimeoutMS: 5000 });
     }
@@ -32,9 +42,11 @@ async function syncCloud() {
       store.acknowledge(entry._id, _revision);
     }
     store.merge(await Employee.find().lean());
+    cloudConnected = true;
     syncError = "";
   } catch (err) {
-    syncError = err.code === 11000 ? "Email conflict in Atlas. Edit the pending employee email to retry." : "Cloud unavailable. Changes are saved on this device.";
+    cloudConnected = false;
+    syncError = err.code === 11000 || err.status === 409 ? "Email conflict in Atlas. Edit the pending employee email to retry." : "Cloud unavailable. Changes are saved on this device.";
     console.error("[Sync]", err.message);
   } finally { syncing = false; }
 }
@@ -55,36 +67,9 @@ app.use((req, res, next) => {
   next();
 });
 
-const employeeSchema = new mongoose.Schema({
-  name: { type: String, required: true, trim: true, minlength: 2, maxlength: 80 },
-  email: { type: String, required: true, trim: true, lowercase: true, maxlength: 160 },
-  designation: { type: String, required: true, trim: true, minlength: 2, maxlength: 80 },
-  department: { type: String, required: true, trim: true, minlength: 2, maxlength: 80 }
-}, { timestamps: true });
-
-employeeSchema.index({ email: 1 }, { unique: true });
-const Employee = mongoose.models.Employee || mongoose.model("Employee", employeeSchema);
-
 app.get("/health", (req, res) => {
   res.json({ ok: true, database: "local", storage: storageStatus() });
 });
-
-function validateEmployee(body) {
-  if (!body || typeof body !== "object") return "Employee details are required.";
-  const fields = ["name", "email", "designation", "department"];
-  for (const field of fields) {
-    if (typeof body[field] !== "string" || !body[field].trim()) {
-      return `${field} is required.`;
-    }
-  }
-  for (const field of fields) {
-    const max = field === "email" ? 160 : 80;
-    if (body[field].trim().length > max || (field !== "email" && body[field].trim().length < 2)) return `${field} must contain ${field === "email" ? "1" : "2"}–${max} characters.`;
-  }
-  if (body.name.trim().length < 2) return "Name must be at least 2 characters.";
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email.trim())) return "Enter a valid email address.";
-  return null;
-}
 
 app.get("/api/employees", async (req, res, next) => {
   try {
