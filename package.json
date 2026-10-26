@@ -1,0 +1,47 @@
+{
+  "name": "employee-desktop-crud-atlas",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Electron + React employee CRUD desktop app using Express and MongoDB Atlas",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "concurrently -k \"npm:dev:server\" \"npm:dev:ui\" \"npm:dev:electron\"",
+    "dev:server": "nodemon server/app.cjs",
+    "dev:ui": "vite --host 127.0.0.1",
+    "dev:electron": "wait-on http://127.0.0.1:5173 http://127.0.0.1:4000/health && electron .",
+    "build": "vite build",
+    "start:server": "node server/app.cjs",
+    "test": "vitest run",
+    "dist": "npm run build && electron-builder",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "mongoose": "^8.9.5",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^9.1.2",
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
+    "nodemon": "^3.1.7",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "vite": "^6.0.7",
+    "vitest": "^2.1.8",
+    "wait-on": "^8.0.1"
+  },
+  "build": {
+    "appId": "com.example.employeecrud",
+    "productName": "Employee CRUD",
+    "files": ["dist/**/*", "electron/**/*", "server/**/*", "package.json", ".env"],
+    "mac": { "target": ["dmg", "zip"] },
+    "win": { "target": ["nsis"] },
+    "linux": { "target": ["AppImage"] }
+  }
+}
